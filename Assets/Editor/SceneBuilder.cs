@@ -39,8 +39,7 @@ public static class SceneBuilder {
         var player  = BuildPlayer(playerBullet);
         BuildTurrets(enemyBullet);
         BuildCrawler();
-        var zones   = BuildZones();
-        var systems = BuildSystems(orbPrefab, zones);
+        var systems = BuildSystems(orbPrefab);
         BuildHUD(systems, player);
 
         Directory.CreateDirectory("Assets/Scenes");
@@ -222,27 +221,13 @@ public static class SceneBuilder {
         c.body = go.GetComponent<SpriteRenderer>();
     }
 
-    static Transform[] BuildZones() {
-        var root = new GameObject("OrbSpawnZones").transform;
-        Vector2[] at = { new(-8, 0), new(8, 0), new(-3, -4), new(3, -4),
-                         new(-3, 4), new(3, 4), new(-8, -4), new(8, -4) };
-        var zones = new Transform[8];
-        for (int i = 0; i < at.Length; i++) {
-            var z = new GameObject($"Z{i + 1}");
-            z.transform.SetParent(root);
-            z.transform.position = at[i];
-            zones[i] = z.transform;
-        }
-        return zones;
-    }
 
-    static GameObject BuildSystems(Orb orbPrefab, Transform[] zones) {
+    static GameObject BuildSystems(Orb orbPrefab) {
         var go = new GameObject("Systems");
         go.AddComponent<LevelManager>();
         go.AddComponent<DirectionSystem>();
         var spawner = go.AddComponent<OrbSpawner>();
         spawner.orbPrefab = orbPrefab;
-        spawner.zones = zones;
         return go;
     }
 
