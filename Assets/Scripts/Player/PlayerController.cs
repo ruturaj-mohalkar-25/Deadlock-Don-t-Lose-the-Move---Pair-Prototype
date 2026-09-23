@@ -29,11 +29,20 @@ public class PlayerController : MonoBehaviour {
         _rb.interpolation = RigidbodyInterpolation2D.Interpolate;
     }
 
-    void OnEnable() {
+    /// <summary>
+    /// Subscribes in Start, NOT OnEnable.
+    ///
+    /// Awake/OnEnable ordering between separate GameObjects is undefined, and the player and
+    /// the Systems object are separate. If the player initialised first, DirectionSystem.I was
+    /// still null, the old OnEnable bailed out silently, and the fins never hid for the entire
+    /// run. Start is guaranteed to run after every Awake, so the singleton always exists.
+    /// </summary>
+    void Start() {
         if (DirectionSystem.I == null) return;
         DirectionSystem.I.OnLost      += RefreshFin;
         DirectionSystem.I.OnRestored  += RefreshFin;
         DirectionSystem.I.OnPermanent += RefreshFin;
+        for (int i = 0; i < Dir.Count; i++) RefreshFin((Direction)i);   // seed initial state
     }
 
     void OnDisable() {
@@ -44,13 +53,24 @@ public class PlayerController : MonoBehaviour {
     }
 
     void Update() {
-        // Aim dot offsets toward the mouse - a centred dot cannot show a direction.
-        if (aimDot != null) {
-            Vector3 m = Camera.main.ScreenToWorldPoint(Input.mousePosition);
-            Vector2 d = ((Vector2)(m - transform.position)).normalized;
-            aimDot.localPosition = d * aimDotRadius;
-        }
+        if (aimDot == null) return;
+
+        // The aim dot doubles as the ARMED light. Firing is locked until a direction is
+        // lost, and a click that silently does nothing reads as broken input, so the dot
+        // only appears once the gun is live.
+        var shooting = GetComponent<PlayerShooting>();
+        bool armed = shooting == null || shooting.Armed;
+        if (_aimDotSr == null) _aimDotSr = aimDot.GetComponent<SpriteRenderer>();
+        if (_aimDotSr != null) _aimDotSr.enabled = armed;
+        if (!armed) return;
+
+        // Offsets toward the mouse - a centred dot cannot show a direction.
+        Vector3 m = Camera.main.ScreenToWorldPoint(Input.mousePosition);
+        Vector2 dir = ((Vector2)(m - transform.position)).normalized;
+        aimDot.localPosition = dir * aimDotRadius;
     }
+
+    SpriteRenderer _aimDotSr;
 
     void FixedUpdate() {
         if (LevelManager.I != null && LevelManager.I.Frozen) { _rb.linearVelocity = Vector2.zero; return; }
