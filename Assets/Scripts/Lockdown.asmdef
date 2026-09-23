@@ -1,0 +1,6 @@
+{
+    "name": "Lockdown",
+    "rootNamespace": "Lockdown",
+    "references": ["UnityEngine.UI"],
+    "autoReferenced": true
+}
