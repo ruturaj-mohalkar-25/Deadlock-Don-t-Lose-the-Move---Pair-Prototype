@@ -85,24 +85,37 @@ public static class SceneBuilder {
     static void BuildCamera() {
         var go = new GameObject("Main Camera");
         go.tag = "MainCamera";
-        go.transform.position = new Vector3(0, 0, -10);
+        // Camera sits ABOVE centre, so the arena renders lower in frame and leaves a wide
+        // band across the top for the HUD. Bottom wall still clears the lower edge.
+        go.transform.position = new Vector3(0, 0.7f, -10);
         var cam = go.AddComponent<Camera>();
         cam.orthographic     = true;
-        cam.orthographicSize = 6f;          // half-height == arena half-height (decision A7)
+        // Half-height 7.2 against a 6-unit play area. Size 6 framed the PLAY AREA exactly,
+        // which meant the walls - which sit outside it - were entirely off-screen.
+        // Combined with the +0.7 offset: visible y is -6.5 .. 7.9, so the bottom wall clears
+        // the edge by 0.1 and there is a 1.5-unit band above the top wall for the HUD.
+        cam.orthographicSize = 7.2f;
         cam.backgroundColor  = BG;
         cam.clearFlags       = CameraClearFlags.SolidColor;
         go.AddComponent<CameraShake>();
         go.AddComponent<AudioListener>();
     }
 
-    /// <summary>Walls OVERLAP at the corners. Four thin strips meeting at a zero-width seam
-    /// let a shallow-angle bullet slip straight through (plan v2 section 9).</summary>
+    /// <summary>
+    /// Walls sit just outside the 20x12 play area, with their INNER faces on the boundary
+    /// (x = +/-10, y = +/-6).
+    ///
+    /// They OVERLAP at the corners on purpose - four strips meeting at a zero-width seam let a
+    /// shallow-angle bullet slip straight through (plan v2 section 9).
+    /// </summary>
     static void BuildWalls() {
+        const float T = 0.4f;               // thickness: was 1.0, which read as a slab
+        const float HX = 10f, HY = 6f;      // play-area half-extents
         var root = new GameObject("Walls").transform;
-        Wall(root, "Top",    new Vector2(0,  6.5f), new Vector2(22, 1));
-        Wall(root, "Bottom", new Vector2(0, -6.5f), new Vector2(22, 1));
-        Wall(root, "Left",   new Vector2(-10.5f, 0), new Vector2(1, 14));
-        Wall(root, "Right",  new Vector2( 10.5f, 0), new Vector2(1, 14));
+        Wall(root, "Top",    new Vector2(0,  HY + T/2), new Vector2(2*HX + 2*T, T));
+        Wall(root, "Bottom", new Vector2(0, -HY - T/2), new Vector2(2*HX + 2*T, T));
+        Wall(root, "Left",   new Vector2(-HX - T/2, 0), new Vector2(T, 2*HY + 2*T));
+        Wall(root, "Right",  new Vector2( HX + T/2, 0), new Vector2(T, 2*HY + 2*T));
     }
 
     static void Wall(Transform parent, string name, Vector2 pos, Vector2 size) {
@@ -172,16 +185,28 @@ public static class SceneBuilder {
         return pc;
     }
 
+    /// <summary>
+    /// Turrets are 0.6 units and sit 1.5 units off the walls, which leaves a 1.2-unit gap
+    /// between each turret and the nearest wall - enough for the 0.8-wide player to slip
+    /// through with 0.4 of clearance.
+    ///
+    /// Both changes were needed. At the old y = +/-5 even a zero-size turret would have left
+    /// only 1.0 units, so shrinking alone could never have opened that lane; the turrets had
+    /// to move inward as well.
+    /// </summary>
     static void BuildTurrets(Bullet enemyBullet) {
+        const float TS = 0.6f;
         var root = new GameObject("Turrets").transform;
-        Vector2[] at = { new(-8, 5), new(8, 5), new(0, -5) };
+        Vector2[] at = { new(-8, 4.5f), new(8, 4.5f), new(0, -4.5f) };
         for (int i = 0; i < at.Length; i++) {
-            var go = Quad($"T{i + 1}", at[i], Vector2.one, new Color(1f, 0.33f, 0.2f), 6);
+            var go = Quad($"T{i + 1}", at[i], Vector2.one * TS, new Color(1f, 0.33f, 0.2f), 6);
             go.transform.SetParent(root);
             go.layer = L("Enemy");
             go.AddComponent<BoxCollider2D>();
 
-            var barrel = Quad("Barrel", Vector2.zero, new Vector2(0.5f, 0.12f),
+            // Local sizes are multiplied by the parent's 0.6 scale, so these are enlarged
+            // to keep the barrel and the telegraph core readable at the smaller body size.
+            var barrel = Quad("Barrel", Vector2.zero, new Vector2(0.9f, 0.22f),
                               new Color(0.67f, 0.13f, 0f), 7);
             barrel.transform.SetParent(go.transform);
             barrel.transform.localPosition = Vector3.zero;
@@ -190,7 +215,9 @@ public static class SceneBuilder {
             tip.transform.SetParent(barrel.transform);
             tip.transform.localPosition = new Vector3(1.1f, 0, 0);
 
-            var core = Quad("Core", Vector2.zero, Vector2.one * 0.25f, new Color(1f, 0.53f, 0.33f), 8);
+            // The core IS the 0.5s telegraph. If it shrinks with the body it stops reading
+            // as a warning, so it is scaled up to hold roughly its old on-screen size.
+            var core = Quad("Core", Vector2.zero, Vector2.one * 0.45f, new Color(1f, 0.53f, 0.33f), 8);
             core.GetComponent<SpriteRenderer>().sprite = SpriteFactory.Load("circle");
             core.transform.SetParent(go.transform);
 
@@ -246,24 +273,31 @@ public static class SceneBuilder {
 
         var hud = systems.AddComponent<HUDController>();
 
-        string[] glyphs = { "↑", "↓", "←", "→" };
-        var arrows = new Text[4];
-        for (int i = 0; i < 4; i++)
-            arrows[i] = Label(canvas.transform, $"Arrow{i}", glyphs[i], 64,
-                              new Vector2(0, 1), new Vector2(60 + i * 70, -60),
-                              TextAnchor.MiddleCenter, OrbSpawner.OrbColors[i]);
+        // No direction arrows: the coloured fins on the ship already show which directions
+        // are live, and they are where the player is already looking.
 
-        hud.arrows = arrows;
-        hud.hearts = Label(canvas.transform, "Hearts", "♥♥♥♥♥", 52,
-                           new Vector2(1, 1), new Vector2(-220, -60), TextAnchor.MiddleRight, Color.red);
-        hud.timer  = Label(canvas.transform, "Timer", "1:00", 84,
-                           new Vector2(0.5f, 1), new Vector2(0, -80), TextAnchor.MiddleCenter, Color.white);
+        // The HUD lives in the band ABOVE the play area - the strip the player can never
+        // enter, so it covers nothing that matters. Timer top-left, hearts top-right, matched
+        // sizes so they read as one row.
+        //
+        // Each is anchored AND pivoted on its own corner, so the text grows inward from the
+        // edge and cannot crop however the window is resized.
+        const int hudSize = 48;
+        const float hudY  = -34f, hudX = 48f;
+
+        hud.hearts = Label(canvas.transform, "Hearts", "♥♥♥♥♥", hudSize,
+                           new Vector2(1, 1), new Vector2(-hudX, hudY),
+                           TextAnchor.UpperRight, Color.red, new Vector2(1, 1));
+        hud.timer  = Label(canvas.transform, "Timer", "1:00", hudSize,
+                           new Vector2(0, 1), new Vector2(hudX, hudY),
+                           TextAnchor.UpperLeft, Color.white, new Vector2(0, 1));
         hud.banner = Label(canvas.transform, "Banner", "", 120,
                            new Vector2(0.5f, 0.5f), Vector2.zero, TextAnchor.MiddleCenter, Color.white);
     }
 
     static Text Label(Transform parent, string name, string text, int size,
-                      Vector2 anchor, Vector2 pos, TextAnchor align, Color color) {
+                      Vector2 anchor, Vector2 pos, TextAnchor align, Color color,
+                      Vector2? pivot = null) {
         var go = new GameObject(name, typeof(Text));
         go.transform.SetParent(parent, false);
         var t = go.GetComponent<Text>();
@@ -276,7 +310,10 @@ public static class SceneBuilder {
         t.verticalOverflow = VerticalWrapMode.Overflow;
         var rt = t.rectTransform;
         rt.anchorMin = rt.anchorMax = anchor;
-        rt.pivot = new Vector2(0.5f, 0.5f);
+        // Pivot defaults to centre, but a CORNER-anchored label must pivot on that same
+        // corner. Otherwise half its box hangs past the screen edge and the text crops -
+        // which is exactly what happened to the hearts when they were top-right before.
+        rt.pivot = pivot ?? new Vector2(0.5f, 0.5f);
         rt.anchoredPosition = pos;
         rt.sizeDelta = new Vector2(600, 140);
         return t;
