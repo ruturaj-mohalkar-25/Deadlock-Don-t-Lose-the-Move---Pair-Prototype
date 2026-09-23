@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -44,7 +45,7 @@ public class LevelManager : MonoBehaviour {
 
     public int Tier => _tier;
     public float CrawlerSpeed  => Mathf.Min(2.0f + 0.5f * _tier, 4.5f);   // capped under player's 5.0
-    public float TurretFireGap => Mathf.Max(2.0f - 0.2f * _tier, 1.0f);   // floor: telegraph is 0.5s,
+    public float TurretFireGap => Mathf.Max(2.0f - 0.3f * _tier, 0.5f);   // 2.0 -> 0.5 across the run
     public float TurretRespawn => Mathf.Max(4.0f - 0.4f * _tier, 2.0f);   // any faster and it glows nonstop
 
     void Awake() {
@@ -97,6 +98,28 @@ public class LevelManager : MonoBehaviour {
 
         Hitstop.Reset();
         OnStateChanged?.Invoke(State);
+        StartCoroutine(Celebrate());
+    }
+
+    /// <summary>
+    /// Fireworks. Only on a win - a death gets the banner and nothing else, because
+    /// celebrating a loss undercuts it.
+    /// </summary>
+    IEnumerator Celebrate() {
+        Color[] palette = {
+            new(1.00f, 0.85f, 0.30f),   // gold
+            new(0.20f, 0.87f, 1.00f),   // cyan
+            new(0.20f, 1.00f, 0.53f),   // green
+            new(1.00f, 0.55f, 0.90f),   // pink
+        };
+
+        for (int i = 0; i < 9; i++) {
+            Vector2 at = new(UnityEngine.Random.Range(-8f, 8f), UnityEngine.Random.Range(-4f, 5f));
+            Burst.Play(at, palette[i % palette.Length], count: 45, speed: 7f, size: 0.26f, life: 1.3f);
+            if (CameraShake.I != null) CameraShake.I.Shake(0.12f, 0.12f);
+            // Realtime: the arena is frozen on a win, so scaled waits would stall.
+            yield return new WaitForSecondsRealtime(0.16f);
+        }
     }
 
     /// <summary>Called by PlayerHealth on the 5th heart, and by Crawler on contact.</summary>
