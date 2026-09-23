@@ -1,0 +1,365 @@
+using System.IO;
+using UnityEditor;
+using UnityEditor.SceneManagement;
+using UnityEngine;
+using UnityEngine.SceneManagement;
+using UnityEngine.UI;
+
+namespace Lockdown.EditorTools {
+
+/// <summary>
+/// Builds Level01 from code (plan v2 section 9/13). Hand-authoring Unity's scene and prefab
+/// YAML is fragile; generating it is reproducible and runs headlessly.
+/// Re-runnable: nuke the scene, rebuild, save.
+/// </summary>
+public static class SceneBuilder {
+    const string ScenePath  = "Assets/Scenes/Level01.unity";
+    const string PrefabDir  = "Assets/Prefabs";
+
+    static readonly Color BG      = new(0.067f, 0.067f, 0.067f);
+    static readonly Color WallCol = new(0.27f, 0.27f, 0.27f);
+    static readonly Color PillarC = new(0.33f, 0.33f, 0.33f);
+
+    [MenuItem("LOCKDOWN/Rebuild Level01")]
+    public static void Build() {
+        SpriteFactory.GenerateAll();
+        ConfigurePhysics();
+
+        var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+
+        BuildCamera();
+        BuildWalls();
+        BuildPillars();
+
+        Directory.CreateDirectory(PrefabDir);
+        Bullet enemyBullet  = MakeBulletPrefab("EnemyBullet",  true);
+        Bullet playerBullet = MakeBulletPrefab("PlayerBullet", false);
+        Orb    orbPrefab    = MakeOrbPrefab();
+
+        var player  = BuildPlayer(playerBullet);
+        BuildTurrets(enemyBullet);
+        BuildCrawler();
+        var zones   = BuildZones();
+        var systems = BuildSystems(orbPrefab, zones);
+        BuildHUD(systems, player);
+
+        Directory.CreateDirectory("Assets/Scenes");
+        EditorSceneManager.SaveScene(scene, ScenePath);
+        EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
+
+        AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
+        Debug.Log("[LOCKDOWN] Level01 built.");
+    }
+
+    /// <summary>CLI entry: -executeMethod Lockdown.EditorTools.SceneBuilder.BuildFromCLI</summary>
+    public static void BuildFromCLI() {
+        Build();
+        EditorApplication.Exit(0);
+    }
+
+    // ------------------------------------------------------------ physics matrix
+
+    /// <summary>Plan v2 section 13. Two cells differ from v1: PlayerBullet x EnemyBullet
+    /// (v1's matrix forbade what section 9 required) and PlayerBullet x Wall (decision C3).</summary>
+    static void ConfigurePhysics() {
+        int P = L("Player"), E = L("Enemy"), EB = L("EnemyBullet"),
+            PB = L("PlayerBullet"), W = L("Wall"), O = L("Orb");
+
+        (int a, int b, bool collide)[] pairs = {
+            (P, P,  false), (P, E,  true ), (P, EB, true ), (P, PB, false), (P, W, true ), (P, O, true ),
+            (E, E,  false), (E, EB, false), (E, PB, true ), (E, W,  true ), (E, O, false),
+            (EB, EB, false), (EB, PB, true ), (EB, W, true ), (EB, O, false),
+            (PB, PB, false), (PB, W, true ), (PB, O, false),
+            (W, W, false), (W, O, false),
+            (O, O, false),
+        };
+        foreach (var (a, b, c) in pairs) Physics2D.IgnoreLayerCollision(a, b, !c);
+
+        Physics2D.gravity = Vector2.zero;   // top-down: no gravity anywhere
+    }
+
+    static int L(string n) => LayerMask.NameToLayer(n);
+
+    // ------------------------------------------------------------ scene pieces
+
+    static void BuildCamera() {
+        var go = new GameObject("Main Camera");
+        go.tag = "MainCamera";
+        go.transform.position = new Vector3(0, 0, -10);
+        var cam = go.AddComponent<Camera>();
+        cam.orthographic     = true;
+        cam.orthographicSize = 6f;          // half-height == arena half-height (decision A7)
+        cam.backgroundColor  = BG;
+        cam.clearFlags       = CameraClearFlags.SolidColor;
+        go.AddComponent<CameraShake>();
+        go.AddComponent<AudioListener>();
+    }
+
+    /// <summary>Walls OVERLAP at the corners. Four thin strips meeting at a zero-width seam
+    /// let a shallow-angle bullet slip straight through (plan v2 section 9).</summary>
+    static void BuildWalls() {
+        var root = new GameObject("Walls").transform;
+        Wall(root, "Top",    new Vector2(0,  6.5f), new Vector2(22, 1));
+        Wall(root, "Bottom", new Vector2(0, -6.5f), new Vector2(22, 1));
+        Wall(root, "Left",   new Vector2(-10.5f, 0), new Vector2(1, 14));
+        Wall(root, "Right",  new Vector2( 10.5f, 0), new Vector2(1, 14));
+    }
+
+    static void Wall(Transform parent, string name, Vector2 pos, Vector2 size) {
+        var go = Quad(name, pos, size, WallCol, 2);
+        go.transform.SetParent(parent);
+        go.layer = L("Wall");
+        go.AddComponent<BoxCollider2D>();
+    }
+
+    static void BuildPillars() {
+        var root = new GameObject("Pillars").transform;
+        Vector2[] at = { new(-5, 2), new(5, 2), new(-5, -2), new(5, -2) };
+        for (int i = 0; i < at.Length; i++) {
+            var go = Quad($"P{i + 1}", at[i], Vector2.one, PillarC, 4);
+            go.transform.SetParent(root);
+            go.layer = L("Wall");
+            go.AddComponent<BoxCollider2D>();
+        }
+    }
+
+    static PlayerController BuildPlayer(Bullet playerBullet) {
+        var go = new GameObject("Player") { layer = L("Player") };
+        go.transform.position = new Vector3(0, 4, 0);
+        go.transform.localScale = Vector3.one * 0.8f;
+
+        var sr = go.AddComponent<SpriteRenderer>();
+        sr.sprite = SpriteFactory.Load("square");
+        sr.color = Color.white;
+        sr.sortingOrder = 10;
+
+        var rb = go.AddComponent<Rigidbody2D>();
+        rb.bodyType = RigidbodyType2D.Dynamic;     // decision A4 - Kinematic walks through walls
+        rb.gravityScale = 0f;                      // Unity's Dynamic default is 1
+        rb.freezeRotation = true;
+        rb.interpolation = RigidbodyInterpolation2D.Interpolate;
+        rb.collisionDetectionMode = CollisionDetectionMode2D.Continuous;
+
+        go.AddComponent<CircleCollider2D>().radius = 0.5f;   // 0.4 world at scale 0.8
+
+        var fins = new SpriteRenderer[4];
+        Vector2[] finPos = { new(0, 0.55f), new(0, -0.55f), new(-0.55f, 0), new(0.55f, 0) };
+        for (int i = 0; i < 4; i++) {
+            var f = Quad($"Fin{(Direction)i}", Vector2.zero, Vector2.one * 0.375f,
+                         OrbSpawner.OrbColors[i], 11);
+            f.transform.SetParent(go.transform);
+            f.transform.localPosition = finPos[i];
+            fins[i] = f.GetComponent<SpriteRenderer>();
+        }
+
+        var dot = Quad("AimDot", Vector2.zero, Vector2.one * 0.19f, new Color(0.2f, 0.87f, 1f), 12);
+        dot.GetComponent<SpriteRenderer>().sprite = SpriteFactory.Load("circle");
+        dot.transform.SetParent(go.transform);
+
+        var fire = new GameObject("FirePoint");
+        fire.transform.SetParent(go.transform);
+        fire.transform.localPosition = Vector3.zero;
+
+        var pc = go.AddComponent<PlayerController>();
+        pc.fins = fins;
+        pc.aimDot = dot.transform;
+
+        var ps = go.AddComponent<PlayerShooting>();
+        ps.bulletPrefab = playerBullet;
+        ps.firePoint = fire.transform;
+
+        go.AddComponent<PlayerHealth>();
+        return pc;
+    }
+
+    static void BuildTurrets(Bullet enemyBullet) {
+        var root = new GameObject("Turrets").transform;
+        Vector2[] at = { new(-8, 5), new(8, 5), new(0, -5) };
+        for (int i = 0; i < at.Length; i++) {
+            var go = Quad($"T{i + 1}", at[i], Vector2.one, new Color(1f, 0.33f, 0.2f), 6);
+            go.transform.SetParent(root);
+            go.layer = L("Enemy");
+            go.AddComponent<BoxCollider2D>();
+
+            var barrel = Quad("Barrel", Vector2.zero, new Vector2(0.5f, 0.12f),
+                              new Color(0.67f, 0.13f, 0f), 7);
+            barrel.transform.SetParent(go.transform);
+            barrel.transform.localPosition = Vector3.zero;
+
+            var tip = new GameObject("BarrelTip");
+            tip.transform.SetParent(barrel.transform);
+            tip.transform.localPosition = new Vector3(1.1f, 0, 0);
+
+            var core = Quad("Core", Vector2.zero, Vector2.one * 0.25f, new Color(1f, 0.53f, 0.33f), 8);
+            core.GetComponent<SpriteRenderer>().sprite = SpriteFactory.Load("circle");
+            core.transform.SetParent(go.transform);
+
+            var t = go.AddComponent<Turret>();
+            t.bulletPrefab = enemyBullet;
+            t.barrel    = barrel.transform;
+            t.barrelTip = tip.transform;
+            t.core      = core.GetComponent<SpriteRenderer>();
+            t.body      = go.GetComponent<SpriteRenderer>();
+        }
+    }
+
+    static void BuildCrawler() {
+        var go = Quad("Crawler", new Vector2(-3, 0), Vector2.one * 0.8f, new Color(1f, 0.2f, 0.67f), 6);
+        go.GetComponent<SpriteRenderer>().sprite = SpriteFactory.Load("triangle");
+        go.layer = L("Enemy");
+        var box = go.AddComponent<BoxCollider2D>();
+        box.isTrigger = true;
+
+        var a = new GameObject("PointA"); a.transform.SetParent(go.transform.parent);
+        a.transform.position = new Vector3(-3, 0, 0);
+        var b = new GameObject("PointB"); b.transform.SetParent(go.transform.parent);
+        b.transform.position = new Vector3(3, 0, 0);
+
+        var c = go.AddComponent<Crawler>();
+        c.pointA = a.transform;
+        c.pointB = b.transform;
+        c.body = go.GetComponent<SpriteRenderer>();
+    }
+
+    static Transform[] BuildZones() {
+        var root = new GameObject("OrbSpawnZones").transform;
+        Vector2[] at = { new(-8, 0), new(8, 0), new(-3, -4), new(3, -4),
+                         new(-3, 4), new(3, 4), new(-8, -4), new(8, -4) };
+        var zones = new Transform[8];
+        for (int i = 0; i < at.Length; i++) {
+            var z = new GameObject($"Z{i + 1}");
+            z.transform.SetParent(root);
+            z.transform.position = at[i];
+            zones[i] = z.transform;
+        }
+        return zones;
+    }
+
+    static GameObject BuildSystems(Orb orbPrefab, Transform[] zones) {
+        var go = new GameObject("Systems");
+        go.AddComponent<LevelManager>();
+        go.AddComponent<DirectionSystem>();
+        var spawner = go.AddComponent<OrbSpawner>();
+        spawner.orbPrefab = orbPrefab;
+        spawner.zones = zones;
+        return go;
+    }
+
+    static void BuildHUD(GameObject systems, PlayerController player) {
+        var canvasGO = new GameObject("HUD Canvas",
+            typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+        var canvas = canvasGO.GetComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        var scaler = canvasGO.GetComponent<CanvasScaler>();
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = new Vector2(1920, 1080);
+
+        if (Object.FindFirstObjectByType<UnityEngine.EventSystems.EventSystem>() == null)
+            new GameObject("EventSystem", typeof(UnityEngine.EventSystems.EventSystem),
+                typeof(UnityEngine.EventSystems.StandaloneInputModule));
+
+        var hud = systems.AddComponent<HUDController>();
+
+        string[] glyphs = { "↑", "↓", "←", "→" };
+        var arrows = new Text[4];
+        for (int i = 0; i < 4; i++)
+            arrows[i] = Label(canvas.transform, $"Arrow{i}", glyphs[i], 64,
+                              new Vector2(0, 1), new Vector2(60 + i * 70, -60),
+                              TextAnchor.MiddleCenter, OrbSpawner.OrbColors[i]);
+
+        hud.arrows = arrows;
+        hud.hearts = Label(canvas.transform, "Hearts", "♥♥♥♥♥", 52,
+                           new Vector2(1, 1), new Vector2(-220, -60), TextAnchor.MiddleRight, Color.red);
+        hud.timer  = Label(canvas.transform, "Timer", "1:00", 84,
+                           new Vector2(0.5f, 1), new Vector2(0, -80), TextAnchor.MiddleCenter, Color.white);
+        hud.banner = Label(canvas.transform, "Banner", "", 120,
+                           new Vector2(0.5f, 0.5f), Vector2.zero, TextAnchor.MiddleCenter, Color.white);
+    }
+
+    static Text Label(Transform parent, string name, string text, int size,
+                      Vector2 anchor, Vector2 pos, TextAnchor align, Color color) {
+        var go = new GameObject(name, typeof(Text));
+        go.transform.SetParent(parent, false);
+        var t = go.GetComponent<Text>();
+        t.text = text;
+        t.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        t.fontSize = size;
+        t.alignment = align;
+        t.color = color;
+        t.horizontalOverflow = HorizontalWrapMode.Overflow;
+        t.verticalOverflow = VerticalWrapMode.Overflow;
+        var rt = t.rectTransform;
+        rt.anchorMin = rt.anchorMax = anchor;
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = pos;
+        rt.sizeDelta = new Vector2(600, 140);
+        return t;
+    }
+
+    // ------------------------------------------------------------ prefabs
+
+    static Bullet MakeBulletPrefab(string name, bool enemy) {
+        var go = Quad(name, Vector2.zero, Vector2.one * (enemy ? 0.15f : 0.15f),
+                      enemy ? new Color(1f, 0.2f, 0.33f) : new Color(0.2f, 0.87f, 1f), 12);
+        go.GetComponent<SpriteRenderer>().sprite = SpriteFactory.Load("circle");
+        go.layer = enemy ? L("EnemyBullet") : L("PlayerBullet");
+
+        var rb = go.AddComponent<Rigidbody2D>();
+        rb.bodyType = RigidbodyType2D.Kinematic;
+        rb.gravityScale = 0f;
+
+        var col = go.AddComponent<CircleCollider2D>();
+        col.radius = 0.5f;          // 0.075 world at scale 0.15
+        col.isTrigger = true;
+
+        var b = go.AddComponent<Bullet>();
+        b.isEnemyBullet = enemy;
+        if (!enemy) { b.freshSpeed = 10f; b.bouncedSpeed = 9f; b.freshLifetime = 3f; b.bouncedLifetime = 2f; }
+
+        var prefab = PrefabUtility.SaveAsPrefabAsset(go, $"{PrefabDir}/{name}.prefab");
+        Object.DestroyImmediate(go);
+        return prefab.GetComponent<Bullet>();
+    }
+
+    static Orb MakeOrbPrefab() {
+        var go = Quad("Orb", Vector2.zero, Vector2.one * 0.8f, Color.white, 8);
+        go.GetComponent<SpriteRenderer>().sprite = SpriteFactory.Load("ring");
+        go.layer = L("Orb");
+
+        var col = go.AddComponent<CircleCollider2D>();
+        col.radius = 0.5f;
+        col.isTrigger = true;
+
+        var icon = Quad("Icon", Vector2.zero, Vector2.one * 0.45f, Color.white, 9);
+        icon.GetComponent<SpriteRenderer>().sprite = SpriteFactory.Load("triangle");
+        icon.transform.SetParent(go.transform);
+
+        var ring = Quad("CountdownRing", Vector2.zero, Vector2.one * 1.15f, Color.white, 7);
+        ring.GetComponent<SpriteRenderer>().sprite = SpriteFactory.Load("ring");
+        ring.transform.SetParent(go.transform);
+
+        var orb = go.AddComponent<Orb>();
+        orb.countdownRing = ring.transform;
+        orb.ringRenderer  = go.GetComponent<SpriteRenderer>();
+        orb.iconRenderer  = icon.GetComponent<SpriteRenderer>();
+
+        var prefab = PrefabUtility.SaveAsPrefabAsset(go, $"{PrefabDir}/Orb.prefab");
+        Object.DestroyImmediate(go);
+        return prefab.GetComponent<Orb>();
+    }
+
+    // ------------------------------------------------------------ helper
+
+    static GameObject Quad(string name, Vector2 pos, Vector2 size, Color color, int order) {
+        var go = new GameObject(name);
+        go.transform.position = pos;
+        go.transform.localScale = size;
+        var sr = go.AddComponent<SpriteRenderer>();
+        sr.sprite = SpriteFactory.Load("square");
+        sr.color = color;
+        sr.sortingOrder = order;
+        return go;
+    }
+}
+}
