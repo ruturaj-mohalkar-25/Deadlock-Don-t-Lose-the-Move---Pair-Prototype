@@ -13,12 +13,20 @@ public class Orb : MonoBehaviour {
     public Transform countdownRing;
     public SpriteRenderer ringRenderer, iconRenderer;
 
+    [Header("Patrol")]
+    [Tooltip("Units per second along its short path. Must stay well under the player's 5 " +
+             "or the orb becomes impossible to intercept.")]
+    public float patrolSpeed = 1.5f;
+
     public Direction Dir { get; private set; }
 
     float _dieAt;
     Vector3 _baseScale = Vector3.one;
 
-    void Awake() { _baseScale = transform.localScale; }   // prefab is 0.8 units (plan section 5)
+    Vector2 _a, _b, _target;
+    bool _patrols;
+
+    void Awake() { _baseScale = transform.localScale; }
 
     public void Init(Direction d, Color c) {
         Dir = d;
@@ -31,9 +39,34 @@ public class Orb : MonoBehaviour {
         }
     }
 
+    /// <summary>
+    /// Give the orb a short back-and-forth path, crawler style.
+    ///
+    /// The axis matches the direction that was lost - horizontal for Left/Right, vertical for
+    /// Up/Down - so the orb sweeps along the axis the player can no longer travel on. You
+    /// cannot chase it, so you position yourself and intercept it on a pass.
+    ///
+    /// Both endpoints are chosen by OrbSpawner to sit INSIDE the player's reachable region.
+    /// A patrol that wandered outside it would put the orb somewhere the player can never go,
+    /// which is the exact bug the reachability rewrite existed to kill.
+    /// </summary>
+    public void SetPatrol(Vector2 a, Vector2 b) {
+        _a = a; _b = b; _target = b;
+        _patrols = (a - b).sqrMagnitude > 0.0001f;
+        transform.position = a;
+    }
+
     void Update() {
         float left = _dieAt - Time.unscaledTime;
         if (left <= 0f) { Despawn(); return; }
+
+        bool frozen = LevelManager.I != null && LevelManager.I.Frozen;
+        if (_patrols && !frozen) {
+            transform.position = Vector2.MoveTowards(transform.position, _target,
+                                                     patrolSpeed * Time.deltaTime);
+            if (((Vector2)transform.position - _target).sqrMagnitude < 0.0001f)
+                _target = _target == _a ? _b : _a;
+        }
 
         if (countdownRing != null) {
             float t = left / lifetime;

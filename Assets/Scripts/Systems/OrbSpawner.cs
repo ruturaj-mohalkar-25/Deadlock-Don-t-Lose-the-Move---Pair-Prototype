@@ -44,6 +44,11 @@ public class OrbSpawner : MonoBehaviour {
              "orb lands in the farther half of where you can still get to.")]
     [Range(0.05f, 1f)] public float farthestFraction = 0.5f;
 
+    [Header("Patrol")]
+    [Tooltip("Half-length of the orb's back-and-forth path. 1.25 gives a 2.5 unit sweep - " +
+             "short, nothing like the crawler's 6.")]
+    public float patrolHalfRange = 1.25f;
+
     public static readonly Color[] OrbColors = {
         new(0.20f, 0.53f, 1.00f),   // Up    #3388FF
         new(1.00f, 0.20f, 0.20f),   // Down  #FF3333
@@ -72,7 +77,40 @@ public class OrbSpawner : MonoBehaviour {
 
         Orb orb = Instantiate(orbPrefab, at, Quaternion.identity);
         orb.Init(d, OrbColors[(int)d]);
+        BuildPatrol(orb, d, at);
         _live[d] = orb;
+    }
+
+    /// <summary>
+    /// Give the orb a short sweep along the axis of the direction just lost - horizontal for
+    /// Left/Right, vertical for Up/Down.
+    ///
+    /// The path is shrunk until BOTH endpoints sit inside the reachable region and clear of
+    /// walls. An orb that patrolled out of reach would recreate the exact bug the
+    /// reachability rewrite killed: a lifeline the player can never touch.
+    /// </summary>
+    void BuildPatrol(Orb orb, Direction lost, Vector2 at) {
+        var player = Object.FindFirstObjectByType<PlayerController>();
+        Vector2 p = player != null ? (Vector2)player.transform.position : Vector2.zero;
+        var ds = DirectionSystem.I;
+        Rect area = ReachableArea(p, arenaHalfExtents,
+                                  dd => ds == null || ds.IsActive(dd), pickupTolerance);
+
+        Vector2 axis = (lost == Direction.Left || lost == Direction.Right)
+                     ? Vector2.right : Vector2.up;
+
+        // Shrink symmetrically until the whole sweep is legal. Falls through to a stationary
+        // orb rather than ever placing an endpoint somewhere unreachable.
+        for (float half = patrolHalfRange; half > 0.1f; half -= 0.25f) {
+            Vector2 a = at - axis * half, b = at + axis * half;
+            if (area.Contains(a) && area.Contains(b) &&
+                Physics2D.OverlapCircle(a, orbRadius, Layers.WallMask) == null &&
+                Physics2D.OverlapCircle(b, orbRadius, Layers.WallMask) == null) {
+                orb.SetPatrol(a, b);
+                return;
+            }
+        }
+        orb.SetPatrol(at, at);   // no room to sweep - sit still
     }
 
     /// <summary>
