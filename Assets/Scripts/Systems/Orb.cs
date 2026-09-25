@@ -15,7 +15,10 @@ public class Orb : MonoBehaviour {
 
     public Direction Dir { get; private set; }
 
+    const float PopTime = 0.25f;
+
     float _dieAt;
+    float _poppedAt = -1f;
     Vector3 _baseScale = Vector3.one;
 
     void Awake() { _baseScale = transform.localScale; }   // prefab is 0.8 units (plan section 5)
@@ -42,7 +45,16 @@ public class Orb : MonoBehaviour {
         // Pulse AROUND the prefab's own scale. Assigning Vector3.one here threw away the
         // 0.8 the prefab was built at, so every orb rendered 25% oversized.
         float pulse = 1f + 0.2f * Mathf.Sin(Time.unscaledTime * (Mathf.PI * 2f / 0.8f));
-        transform.localScale = _baseScale * pulse;
+        // Grows back in after a relocation so the jump reads as deliberate, not a glitch.
+        float pop = _poppedAt < 0f ? 1f : Mathf.Clamp01((Time.unscaledTime - _poppedAt) / PopTime);
+        transform.localScale = _baseScale * pulse * pop;
+    }
+
+    /// <summary>Moved by OrbSpawner when a newer loss left this orb unreachable. The timer
+    /// keeps running - relocation fixes fairness, it isn't a refund.</summary>
+    public void Relocate(Vector2 to) {
+        transform.position = to;
+        _poppedAt = Time.unscaledTime;
     }
 
     void Despawn() {
