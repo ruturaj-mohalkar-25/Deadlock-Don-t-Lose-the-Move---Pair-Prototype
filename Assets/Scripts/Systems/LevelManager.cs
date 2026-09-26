@@ -19,6 +19,8 @@ public class LevelManager : MonoBehaviour {
 
     [Header("Difficulty ramp (plan v2 section 2)")]
     public float tierLength = 10f;
+    /// <summary>When Remaining hits this, the late center-cross crawlers spawn.</summary>
+    public float latePhaseLead = 20f;
 
     public GameState State { get; private set; } = GameState.Playing;
 
@@ -37,6 +39,7 @@ public class LevelManager : MonoBehaviour {
 
     int _tier = 0;
     float _deathAt = -1f;
+    bool _lateCrawlersSpawned;
 
     // ------------------------------------------------------------------ the ramp
     // Six tiers over 60s. This is the only escalation in the game - in v1 nothing changed
@@ -79,10 +82,47 @@ public class LevelManager : MonoBehaviour {
         int t = Mathf.Clamp(Mathf.FloorToInt(Elapsed / tierLength), 0, 5);
         if (t != _tier) { _tier = t; OnTierChanged?.Invoke(_tier); }
 
+        // Late phase: center-cross pair (vertical midline + horizontal midline).
+        if (!_lateCrawlersSpawned && Remaining <= latePhaseLead) SpawnLateCrawlers();
+
         // Plan v2 section 10, rule 2: the WIN CHECK RUNS FIRST. Taking the 5th hit at
         // t=59.98 makes both conditions true on the same frame, and being killed by
         // evaluation order is the worst possible way to lose a run you survived.
         if (Elapsed >= runDuration) Win();
+    }
+
+    // Last 20s: spawn two more crawlers at the center (one up/down, one left/right)
+    void SpawnLateCrawlers() {
+        _lateCrawlersSpawned = true;
+
+        // Clone from the scene's S-path crawler
+        Crawler proto = null;
+        foreach (Crawler c in FindObjectsByType<Crawler>(FindObjectsSortMode.None))
+            if (c.pathMode == Crawler.PathMode.SCurve) { proto = c; break; }
+        if (proto == null) return;
+
+        MakeCrawler(proto, Crawler.PathMode.Vertical);
+        MakeCrawler(proto, Crawler.PathMode.Horizontal);
+    }
+
+    void MakeCrawler(Crawler proto, Crawler.PathMode mode) {
+        GameObject go = Instantiate(proto.gameObject);
+        go.name = "Crawler_" + mode;
+
+        Crawler c = go.GetComponent<Crawler>();
+        c.pathMode = mode;
+        c.laneX = 0f;
+        c.laneY = 0f;
+        c.topY = 5f;
+        c.bottomY = -5f;
+        c.leftX = -9f;
+        c.rightX = 9f;
+
+        // Vertical starts at the top; horizontal starts at the left
+        if (mode == Crawler.PathMode.Vertical)
+            go.transform.position = new Vector3(0f, 5f, 0f);
+        else
+            go.transform.position = new Vector3(-9f, 0f, 0f);
     }
 
     void Win() {

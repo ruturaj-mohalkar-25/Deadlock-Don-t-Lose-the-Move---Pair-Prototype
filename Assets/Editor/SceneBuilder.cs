@@ -205,20 +205,14 @@ public static class SceneBuilder {
     }
 
     static void BuildCrawler() {
-        var go = Quad("Crawler", new Vector2(-3, 0), Vector2.one * 0.8f, new Color(1f, 0.2f, 0.67f), 6);
+        // Starts at the left end of the full-arena S-curve (see Crawler.cs).
+        var go = Quad("Crawler", new Vector2(-9, 0), Vector2.one * 0.8f, new Color(1f, 0.2f, 0.67f), 6);
         go.GetComponent<SpriteRenderer>().sprite = SpriteFactory.Load("triangle");
         go.layer = L("Enemy");
         var box = go.AddComponent<BoxCollider2D>();
         box.isTrigger = true;
 
-        var a = new GameObject("PointA"); a.transform.SetParent(go.transform.parent);
-        a.transform.position = new Vector3(-3, 0, 0);
-        var b = new GameObject("PointB"); b.transform.SetParent(go.transform.parent);
-        b.transform.position = new Vector3(3, 0, 0);
-
         var c = go.AddComponent<Crawler>();
-        c.pointA = a.transform;
-        c.pointB = b.transform;
         c.body = go.GetComponent<SpriteRenderer>();
     }
 
