@@ -158,9 +158,7 @@ public class PlayerController : MonoBehaviour {
 
         if (_crawler == null) _crawler = FindFirstObjectByType<Crawler>();
         if (_crawler != null && _crawler.isActiveAndEnabled) {
-            Vector2 a = _crawler.pointA != null ? _crawler.pointA.position : _crawler.transform.position;
-            Vector2 b = _crawler.pointB != null ? _crawler.pointB.position : _crawler.transform.position;
-            target = StopShortOf(pos, target, a, b, crawlerClearance);
+            target = StopShortOf(pos, target, _crawler.PathStart(), _crawler.PathEnd(), crawlerClearance);
         }
 
         if (_bx != 0) {

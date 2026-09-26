@@ -126,9 +126,7 @@ public class OrbSpawner : MonoBehaviour {
         foreach (var t in Object.FindObjectsByType<Turret>(FindObjectsSortMode.None))
             q.hazards.Add(new OrbPlacement.Hazard(t.transform.position, t.transform.position, minDistance));
         foreach (var c in Object.FindObjectsByType<Crawler>(FindObjectsSortMode.None)) {
-            Vector2 a = c.pointA != null ? c.pointA.position : c.transform.position;
-            Vector2 b = c.pointB != null ? c.pointB.position : c.transform.position;
-            q.hazards.Add(new OrbPlacement.Hazard(a, b, crawlerPathClearance));
+            q.hazards.Add(new OrbPlacement.Hazard(c.PathStart(), c.PathEnd(), crawlerPathClearance));
         }
 
         foreach (var orb in _live.Values)

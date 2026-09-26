@@ -92,6 +92,19 @@ public class Crawler : MonoBehaviour {
         return amplitude * Mathf.Sin(Mathf.PI * x / halfWidth);
     }
 
+    // Path endpoints (used by OrbSpawner / PlayerController to stay clear of the patrol)
+    public Vector2 PathStart() {
+        if (pathMode == PathMode.Vertical) return new Vector2(laneX, bottomY);
+        if (pathMode == PathMode.Horizontal) return new Vector2(leftX, laneY);
+        return new Vector2(-halfWidth, SineY(-halfWidth));
+    }
+
+    public Vector2 PathEnd() {
+        if (pathMode == PathMode.Vertical) return new Vector2(laneX, topY);
+        if (pathMode == PathMode.Horizontal) return new Vector2(rightX, laneY);
+        return new Vector2(halfWidth, SineY(halfWidth));
+    }
+
     // Point the triangle along travel (sprite apex is up, so subtract 90)
     void Face(float dirX, float dirY) {
         float angle = Mathf.Atan2(dirY, dirX) * Mathf.Rad2Deg - 90f;
