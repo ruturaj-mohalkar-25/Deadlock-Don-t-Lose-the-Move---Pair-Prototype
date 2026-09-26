@@ -50,6 +50,14 @@ public class DirectionSystem : MonoBehaviour {
 
     public bool IsActive(Direction d)    => d != Direction.None && _active[(int)d];
     public bool IsPermanent(Direction d) => d != Direction.None && _permanent[(int)d];
+    /// <summary>What the mercy rule would hand back right now. OrbSpawner plans orb placement
+    /// around it when all four are gone.</summary>
+    public Direction NextMercyAward {
+        get {
+            foreach (Direction d in Dir.Priority) if (!_active[(int)d]) return d;
+            return Direction.None;
+        }
+    }
     public bool AnyActive() { for (int i = 0; i < Dir.Count; i++) if (_active[i]) return true; return false; }
 
     // ---------------------------------------------------------------- quadrant rule
@@ -88,11 +96,18 @@ public class DirectionSystem : MonoBehaviour {
     public Direction ApplyHit(Vector2 travel) {
         Direction d = ResolveLoss(travel);
         if (d == Direction.None) return Direction.None;
+        Lose(d);
+        return d;
+    }
+
+    /// <summary>Removes one specific direction. ApplyHit's back half; also the editor-only
+    /// debug keys in PlayerController.</summary>
+    public void Lose(Direction d) {
+        if (d == Direction.None || !_active[(int)d]) return;
         _active[(int)d] = false;
         _permanent[(int)d] = false;
         OnLost?.Invoke(d);
         EvaluateMercy();
-        return d;
     }
 
     // ---------------------------------------------------------------- recovery
@@ -141,9 +156,7 @@ public class DirectionSystem : MonoBehaviour {
     /// hearts the sole death clock, which is the point.
     /// </summary>
     void MercyAward() {
-        Direction award = Direction.None;
-        foreach (Direction d in Dir.Priority)
-            if (!_active[(int)d]) { award = d; break; }
+        Direction award = NextMercyAward;
 
         _mercyAt = -1f;
         OnMercyWindowChanged?.Invoke(false);
